@@ -66,6 +66,11 @@ public class LedgerQueryAdapter implements LedgerQueryPort {
         return entries.netChargedByRequest(requestId);
     }
 
+    @Override
+    public long settledSince(String accountId, Instant since) {
+        return entries.settledSince(accountId, since);
+    }
+
     static LedgerEntry toDomain(LedgerEntryEntity e) {
         return new LedgerEntry(e.entryId, e.accountId, e.requestId, e.type, e.amountMinor, e.kind, e.priceVersionId,
                 e.reason, e.evidenceRef, e.idempotencyKey, e.traceId, e.createdAt);

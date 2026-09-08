@@ -36,16 +36,19 @@ public class GatewayOrchestrator {
     private final UsageEventPort usageEvents;
     private final ExposureRepositoryPort exposureRepo;
     private final TimeService time;
+    private final io.quotapilot.ratelimit.domain.RateLimiter rateLimiter;
 
     public GatewayOrchestrator(ReservationEngine engine, SettlementService settlementService,
                                SupplierRegistry registry, UsageEventPort usageEvents,
-                               ExposureRepositoryPort exposureRepo, TimeService time) {
+                               ExposureRepositoryPort exposureRepo, TimeService time,
+                               io.quotapilot.ratelimit.domain.RateLimiter rateLimiter) {
         this.engine = engine;
         this.settlementService = settlementService;
         this.registry = registry;
         this.usageEvents = usageEvents;
         this.exposureRepo = exposureRepo;
         this.time = time;
+        this.rateLimiter = rateLimiter;
     }
 
     public GatewayResult execute(GatewayRequest req) {
@@ -53,9 +56,12 @@ public class GatewayOrchestrator {
         String requestId = req.requestId() == null ? UUID.randomUUID().toString() : req.requestId();
         SupplierSpi supplier = registry.get(req.supplier());
 
-        ReserveResult reserve = engine.reserve(new ReserveCommand(requestId,
+        // 阶段一：解析额度/价格/估算（M3 prepare）；阶段二前插入 M7 限流（额度管钱、限流管速率）
+        ReservationEngine.Prepared prepared = engine.prepare(new ReserveCommand(requestId,
                 new ReserveCommand.ScopeValues(req.userId(), req.teamId(), req.taskId()),
                 req.model(), "TOKEN", req.declaredEstimatedUnits(), req.ttlSeconds(), traceId));
+        rateLimiter.check(prepared.account().accountId(), prepared.units(), prepared.estimateMinor());
+        ReserveResult reserve = engine.reserve(prepared);
         if (req.reserveOnly()) {
             return new GatewayResult(requestId, reserve.holdId(), reserve.accountId(), GatewayResult.RESERVED,
                     null, null, 0, 0, 0, null, reserve.duplicate(), traceId);
@@ -75,19 +81,23 @@ public class GatewayOrchestrator {
             }
             actual = supplier.parseUsage(body);
         } catch (SupplierCallException e) {
-            return handleSupplierFailure(req, requestId, reserve, traceId, e);
+            return handleSupplierFailure(req, requestId, reserve, prepared, traceId, e);
         }
 
         recordUsage(supplier.name(), requestId, actual.supplierRequestId(), reserve.accountId(), req.model(),
                 actual.usageUnits(), traceId);
         SettlementResult settled = settlementService.settle(requestId, actual.usageUnits());
+        // M7：用量型限流按实际用量返还/补扣（尽力而为）
+        rateLimiter.onSettled(reserve.accountId(), actual.usageUnits(), settled.chargedMinor(),
+                prepared.units(), prepared.estimateMinor());
         return new GatewayResult(requestId, reserve.holdId(), reserve.accountId(), GatewayResult.SUCCEEDED, null,
                 actual.supplierRequestId(), actual.usageUnits(), settled.chargedMinor(), settled.refundMinor(),
                 null, reserve.duplicate(), traceId);
     }
 
     private GatewayResult handleSupplierFailure(GatewayRequest req, String requestId, ReserveResult reserve,
-                                                String traceId, SupplierCallException e) {
+                                                ReservationEngine.Prepared prepared, String traceId,
+                                                SupplierCallException e) {
         boolean dispatched = e.isDispatched() || e.getPartialUnits() > 0;
         if (e.getPartialUnits() > 0) {
             // 流中断：已观测的部分用量先入明细（尽力计价依据），敞口等待对账（Q6）
@@ -108,6 +118,8 @@ public class GatewayOrchestrator {
             return new GatewayResult(requestId, reserve.holdId(), reserve.accountId(), GatewayResult.SUCCEEDED,
                     null, null, e.getPartialUnits(), released.chargedMinor(), 0, null, reserve.duplicate(), traceId);
         }
+        // M7：释放路径全额返还预留扣减（实际用量由供应商回调/对账另行结算）
+        rateLimiter.onReleased(reserve.accountId(), prepared.units(), prepared.estimateMinor());
         String exposureId = dispatched
                 ? exposureRepo.findByRequestId(requestId).map(exp -> exp.getExposureId()).orElse(null)
                 : null;

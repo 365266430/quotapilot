@@ -73,6 +73,16 @@ public class UsageEventAdapter implements UsageEventPort {
         return repo.countByAccountId(accountId);
     }
 
+    @Override
+    public long countByAccountSince(String accountId, java.time.Instant since) {
+        return repo.countByAccountIdAndOccurredAtAfter(accountId, since);
+    }
+
+    @Override
+    public long sumQuantityByAccountSince(String accountId, java.time.Instant since) {
+        return repo.sumQuantityByAccountSince(accountId, since);
+    }
+
     static UsageEvent toDomain(UsageEventEntity e) {
         return new UsageEvent(e.usageEventId, e.requestId, e.supplierRequestId, e.accountId, e.sku, e.usageType,
                 e.quantity, e.occurredAt, e.source, e.seq, e.traceId);

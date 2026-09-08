@@ -277,5 +277,15 @@ class M3M4FlowTest {
         public long countByAccount(String accountId) {
             return 0;
         }
+
+        @Override
+        public long countByAccountSince(String accountId, java.time.Instant since) {
+            return 0;
+        }
+
+        @Override
+        public long sumQuantityByAccountSince(String accountId, java.time.Instant since) {
+            return 0;
+        }
     }
 }

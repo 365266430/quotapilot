@@ -52,6 +52,13 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, "IDEMPOTENCY_CONFLICT", e.getMessage());
     }
 
+    @ExceptionHandler(DomainExceptions.RateLimited.class)
+    public ResponseEntity<ApiError> rateLimited(DomainExceptions.RateLimited e) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .headers(h -> h.add("Retry-After", String.valueOf(e.retryAfterSeconds)))
+                .body(new ApiError("RATE_LIMITED", e.getMessage(), TraceIdFilter.currentTraceId()));
+    }
+
     @ExceptionHandler(DomainExceptions.NotFound.class)
     public ResponseEntity<ApiError> notFound(DomainExceptions.NotFound e) {
         return build(HttpStatus.NOT_FOUND, "NOT_FOUND", e.getMessage());

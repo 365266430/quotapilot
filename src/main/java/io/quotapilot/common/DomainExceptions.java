@@ -77,6 +77,18 @@ public final class DomainExceptions {
         }
     }
 
+    /** 限流 → 429 RATE_LIMITED，携带 Retry-After 秒数。 */
+    public static class RateLimited extends RuntimeException {
+        public final String dimension;
+        public final long retryAfterSeconds;
+
+        public RateLimited(String dimension, long retryAfterSeconds) {
+            super("RATE_LIMITED: dimension=" + dimension + " retryAfter=" + retryAfterSeconds + "s");
+            this.dimension = dimension;
+            this.retryAfterSeconds = Math.max(1, retryAfterSeconds);
+        }
+    }
+
     /** 幂等键冲突但内容不同（同 key 不同语义）→ 409。 */
     public static class IdempotencyConflict extends RuntimeException {
         public IdempotencyConflict(String key) {

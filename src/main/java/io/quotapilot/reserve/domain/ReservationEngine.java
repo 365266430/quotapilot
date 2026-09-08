@@ -52,7 +52,11 @@ public class ReservationEngine {
         this.defaultCurrency = defaultCurrency;
     }
 
-    public ReserveResult reserve(ReserveCommand cmd) {
+    /**
+     * 阶段一：解析额度、价格快照与估算成本（无副作用锁资源）。
+     * M7 限流器在此阶段与阶段二之间介入（额度管「钱」、限流管「速率」，语义分离）。
+     */
+    public Prepared prepare(ReserveCommand cmd) {
         Instant now = time.now();
         // 1. 解析额度（M1）与账户
         ScopeContext ctx = new ScopeContext(cmd.scope().userId(), cmd.scope().teamId(), cmd.skuModel(), cmd.scope().taskId());
@@ -76,41 +80,57 @@ public class ReservationEngine {
             throw new DomainExceptions.HoldFailed("估计用量必须为正: " + units, null);
         }
         long estimate = Amounts.exactMultiply(units, snapshot.pricePerUnitMinor());
+        long ttl = cmd.ttlSeconds() > 0 ? cmd.ttlSeconds() : defaultTtlSeconds;
+        return new Prepared(cmd.requestId(), account, snapshot, units, estimate, cmd.traceId(),
+                now.plusSeconds(ttl));
+    }
+
+    /** 阶段二产物：已完成额度/价格/估算解析的预留请求。 */
+    public record Prepared(String requestId, AccountPort.AccountSnapshot account, PriceSnapshot snapshot,
+                           long units, long estimateMinor, String traceId, Instant expiresAt) {}
+
+    public ReserveResult reserve(ReserveCommand cmd) {
+        return reserve(prepare(cmd));
+    }
+
+    public ReserveResult reserve(Prepared prepared) {
         // 4. Redis 原子门（P4：检查+扣减一步完成）
-        ReservationGatePort.GateResult gateResult = gate.tryReserve(account.accountId(), estimate);
+        ReservationGatePort.GateResult gateResult = gate.tryReserve(prepared.account().accountId(),
+                prepared.estimateMinor());
         if (!gateResult.ok()) {
-            throw new DomainExceptions.QuotaExceeded(account.accountId(), estimate, gateResult.availableMinor());
+            throw new DomainExceptions.QuotaExceeded(prepared.account().accountId(), prepared.estimateMinor(),
+                    gateResult.availableMinor());
         }
         // 5. DB 同事务落账（P3/P6）；失败立即补偿释放 Redis，sweeper 兜底（Q1）
-        long ttl = cmd.ttlSeconds() > 0 ? cmd.ttlSeconds() : defaultTtlSeconds;
         try {
             LedgerPortAccess.HoldOutcome outcome = ledgerAccess.doHold(new LedgerPortAccess.HoldParams(
-                    cmd.requestId(), account.accountId(), estimate, snapshot.priceVersionId(),
-                    now.plusSeconds(ttl), cmd.traceId()));
+                    prepared.requestId(), prepared.account().accountId(), prepared.estimateMinor(),
+                    prepared.snapshot().priceVersionId(), prepared.expiresAt(), prepared.traceId()));
             if (outcome.duplicate()) {
                 // 并发同 requestId：回滚本次多扣的 Redis held，返回首次结果
-                gate.releaseHold(account.accountId(), estimate);
-                Reservation existing = reservationRepo.findByRequestId(cmd.requestId()).orElse(null);
+                gate.releaseHold(prepared.account().accountId(), prepared.estimateMinor());
+                Reservation existing = reservationRepo.findByRequestId(prepared.requestId()).orElse(null);
                 if (existing == null) {
-                    throw new DomainExceptions.HoldFailed("重复预留但找不到首次记录: " + cmd.requestId(), null);
+                    throw new DomainExceptions.HoldFailed("重复预留但找不到首次记录: " + prepared.requestId(), null);
                 }
-                return new ReserveResult(cmd.requestId(), existing.getHoldId(), account.accountId(),
-                        existing.getReservedAmountMinor(), units, existing.getPriceVersionId(),
-                        existing.getExpiresAt(), true);
+                return new ReserveResult(prepared.requestId(), existing.getHoldId(),
+                        prepared.account().accountId(), existing.getReservedAmountMinor(), prepared.units(),
+                        existing.getPriceVersionId(), existing.getExpiresAt(), true);
             }
-            return new ReserveResult(cmd.requestId(), outcome.holdId(), account.accountId(), estimate, units,
-                    snapshot.priceVersionId(), now.plusSeconds(ttl), false);
+            return new ReserveResult(prepared.requestId(), outcome.holdId(), prepared.account().accountId(),
+                    prepared.estimateMinor(), prepared.units(), prepared.snapshot().priceVersionId(),
+                    prepared.expiresAt(), false);
         } catch (RuntimeException e) {
-            gate.releaseHold(account.accountId(), estimate);
+            gate.releaseHold(prepared.account().accountId(), prepared.estimateMinor());
             if (e instanceof DomainExceptions.DuplicateRequest dup) {
-                Reservation existing = reservationRepo.findByRequestId(cmd.requestId()).orElse(null);
+                Reservation existing = reservationRepo.findByRequestId(prepared.requestId()).orElse(null);
                 if (existing != null) {
-                    return new ReserveResult(cmd.requestId(), existing.getHoldId(), account.accountId(),
-                            existing.getReservedAmountMinor(), units, existing.getPriceVersionId(),
-                            existing.getExpiresAt(), true);
+                    return new ReserveResult(prepared.requestId(), existing.getHoldId(),
+                            prepared.account().accountId(), existing.getReservedAmountMinor(), prepared.units(),
+                            existing.getPriceVersionId(), existing.getExpiresAt(), true);
                 }
             }
-            throw new DomainExceptions.HoldFailed("预留落库失败，已补偿释放 Redis: " + cmd.requestId(), e);
+            throw new DomainExceptions.HoldFailed("预留落库失败，已补偿释放 Redis: " + prepared.requestId(), e);
         }
     }
 

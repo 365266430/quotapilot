@@ -28,17 +28,20 @@ public class AdminController {
     private final ExposureRepositoryPort exposureRepo;
     private final SupplierChargeStorePort supplierCharges;
     private final io.quotapilot.dashboard.domain.DashboardService dashboardService;
+    private final io.quotapilot.ratelimit.domain.RateLimitRulePort rateLimitRulePort;
 
     public AdminController(ReconciliationService reconciliationService, SweeperService sweeperService,
                            QuotaService quotaService, ExposureRepositoryPort exposureRepo,
                            SupplierChargeStorePort supplierCharges,
-                           io.quotapilot.dashboard.domain.DashboardService dashboardService) {
+                           io.quotapilot.dashboard.domain.DashboardService dashboardService,
+                           io.quotapilot.ratelimit.domain.RateLimitRulePort rateLimitRulePort) {
         this.reconciliationService = reconciliationService;
         this.sweeperService = sweeperService;
         this.quotaService = quotaService;
         this.exposureRepo = exposureRepo;
         this.supplierCharges = supplierCharges;
         this.dashboardService = dashboardService;
+        this.rateLimitRulePort = rateLimitRulePort;
     }
 
     public record ReconcileReq(String accountId) {}
@@ -78,5 +81,24 @@ public class AdminController {
     @GetMapping("/v1/admin/alerts")
     public List<io.quotapilot.alert.domain.Alert> alerts() {
         return dashboardService.recentAlerts(50);
+    }
+
+    // ---- M7 限流规则 ----
+
+    public record RateLimitReq(long requestsPerSecond, long tokensPerMinute, long billingUnitsPerMinute) {}
+
+    @org.springframework.web.bind.annotation.PostMapping("/v1/admin/rate-limits")
+    public io.quotapilot.ratelimit.domain.RateLimitRule setRateLimit(
+            @org.springframework.web.bind.annotation.PathVariable("id") String accountId,
+            @RequestBody RateLimitReq req) {
+        return rateLimitRulePort.save(new io.quotapilot.ratelimit.domain.RateLimitRule(accountId,
+                req.requestsPerSecond(), req.tokensPerMinute(), req.billingUnitsPerMinute()));
+    }
+
+    @org.springframework.web.bind.annotation.GetMapping("/v1/admin/rate-limits/{id}")
+    public io.quotapilot.ratelimit.domain.RateLimitRule getRateLimit(
+            @org.springframework.web.bind.annotation.PathVariable("id") String accountId) {
+        return rateLimitRulePort.findByAccount(accountId).orElseThrow(
+                () -> new io.quotapilot.common.DomainExceptions.NotFound("限流规则不存在: " + accountId));
     }
 }

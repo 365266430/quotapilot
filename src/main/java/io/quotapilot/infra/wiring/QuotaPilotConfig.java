@@ -85,11 +85,25 @@ public class QuotaPilotConfig {
     }
 
     @Bean
+    public io.quotapilot.ratelimit.domain.RateLimiter rateLimiter(
+            io.quotapilot.infra.persistence.RateLimitRuleAdapter rulePort,
+            io.quotapilot.infra.redis.RedisRateLimiter port, UsageEventAdapter usageEvents,
+            LedgerQueryAdapter ledgerQuery, TimeService time,
+            @Value("${quotapilot.ratelimit.requests-per-second:100}") long rps,
+            @Value("${quotapilot.ratelimit.tokens-per-minute:0}") long tpm,
+            @Value("${quotapilot.ratelimit.billing-units-per-minute:0}") long bum) {
+        return new io.quotapilot.ratelimit.domain.RateLimiter(rulePort, port, usageEvents, ledgerQuery, time,
+                new io.quotapilot.ratelimit.domain.RateLimitRule("*system-default*", rps, tpm, bum));
+    }
+
+    @Bean
     public GatewayOrchestrator gatewayOrchestrator(ReservationEngine engine, SettlementService settlementService,
                                                    io.quotapilot.supplier.domain.SupplierRegistry registry,
                                                    UsageEventAdapter usageEvents,
-                                                   ExposureAdapter exposureRepo, TimeService time) {
-        return new GatewayOrchestrator(engine, settlementService, registry, usageEvents, exposureRepo, time);
+                                                   ExposureAdapter exposureRepo, TimeService time,
+                                                   io.quotapilot.ratelimit.domain.RateLimiter rateLimiter) {
+        return new GatewayOrchestrator(engine, settlementService, registry, usageEvents, exposureRepo, time,
+                rateLimiter);
     }
 
     @Bean

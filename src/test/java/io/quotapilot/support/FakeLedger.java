@@ -221,6 +221,13 @@ public class FakeLedger implements LedgerPort, LedgerQueryPort, ReservationRepos
                 .mapToLong(LedgerEntry::getAmountMinor).sum();
     }
 
+    @Override
+    public synchronized long settledSince(String accountId, Instant since) {
+        return entries.stream().filter(e -> e.getAccountId().equals(accountId))
+                .filter(e -> e.getType() == LedgerEntryType.SETTLE && e.getCreatedAt().isAfter(since))
+                .mapToLong(LedgerEntry::getAmountMinor).sum();
+    }
+
     // ---- ReservationRepositoryPort ----
 
     @Override

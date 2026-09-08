@@ -18,4 +18,10 @@ public interface UsageEventPort {
     List<UsageEvent> pageByAccount(String accountId, int page, int size);
 
     long countByAccount(String accountId);
+
+    /** [M7 重建] 账户在 since 之后的请求数（REQUESTS 维度滑动窗口重建）。 */
+    long countByAccountSince(String accountId, java.time.Instant since);
+
+    /** [M7 重建] 账户在 since 之后的用量合计（TOKENS 维度令牌桶重建）。 */
+    long sumQuantityByAccountSince(String accountId, java.time.Instant since);
 }

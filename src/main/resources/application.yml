@@ -40,6 +40,10 @@ quotapilot:
   mock:
     default-delay-millis: 0
     default-drift-percent: 0
+  ratelimit:
+    requests-per-second: 100     # 系统默认限流（账户级规则可覆盖；0=不限）
+    tokens-per-minute: 0
+    billing-units-per-minute: 0
 
 ---
 spring:

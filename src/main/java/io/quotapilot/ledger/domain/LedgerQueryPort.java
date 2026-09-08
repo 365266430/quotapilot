@@ -26,4 +26,7 @@ public interface LedgerQueryPort {
 
     /** 单请求的净入账 = ΣSETTLE + ΣADJUST（对账差额计算用）。 */
     long netChargedByRequest(String requestId);
+
+    /** [M7 重建] 账户在 since 之后的结算入账合计（BILLING_UNITS 维度令牌桶重建）。 */
+    long settledSince(String accountId, Instant since);
 }

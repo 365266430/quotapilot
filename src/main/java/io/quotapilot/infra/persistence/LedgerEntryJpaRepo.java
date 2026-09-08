@@ -27,6 +27,9 @@ public interface LedgerEntryJpaRepo extends JpaRepository<LedgerEntryEntity, Str
     @Query("select distinct e.accountId from LedgerEntryEntity e where e.createdAt > :since")
     List<String> recentActiveAccountIds(@Param("since") Instant since);
 
+    @Query("select coalesce(sum(e.amountMinor),0) from LedgerEntryEntity e where e.accountId = :a and e.type = io.quotapilot.ledger.domain.LedgerEntryType.SETTLE and e.createdAt > :since")
+    long settledSince(@Param("a") String accountId, @Param("since") Instant since);
+
     interface TypeSum {
         LedgerEntryType getType();
 
