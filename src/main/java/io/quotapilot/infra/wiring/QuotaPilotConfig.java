@@ -79,10 +79,17 @@ public class QuotaPilotConfig {
     }
 
     @Bean
+    public io.quotapilot.supplier.domain.SupplierRegistry supplierRegistry(MockSupplier mockSupplier) {
+        return new io.quotapilot.supplier.domain.SupplierRegistry(java.util.Map.of(
+                mockSupplier.name(), mockSupplier));
+    }
+
+    @Bean
     public GatewayOrchestrator gatewayOrchestrator(ReservationEngine engine, SettlementService settlementService,
-                                                   MockSupplier supplier, UsageEventAdapter usageEvents,
+                                                   io.quotapilot.supplier.domain.SupplierRegistry registry,
+                                                   UsageEventAdapter usageEvents,
                                                    ExposureAdapter exposureRepo, TimeService time) {
-        return new GatewayOrchestrator(engine, settlementService, supplier, usageEvents, exposureRepo, time);
+        return new GatewayOrchestrator(engine, settlementService, registry, usageEvents, exposureRepo, time);
     }
 
     @Bean

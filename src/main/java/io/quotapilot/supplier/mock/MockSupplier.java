@@ -1,21 +1,26 @@
 package io.quotapilot.supplier.mock;
 
-import java.time.Instant;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.quotapilot.common.TimeService;
 import io.quotapilot.supplier.domain.CallbackSenderPort;
+import io.quotapilot.supplier.domain.StreamedResponse;
 import io.quotapilot.supplier.domain.SupplierChargeStorePort;
 import io.quotapilot.supplier.domain.SupplierCallException;
 import io.quotapilot.supplier.domain.SupplierSpi;
 
 /**
  * [M10] MockSupplier（V1 必做）：固定单价 + 请求前可返回估计用量 + 可注入故障。
- * 故障类型（可按请求注入，用于确定性测试 M3/M4/M5）：
+ * 故障类型（可按请求注入，用于确定性测试 M3/M4/M5/M6）：
  * DELAY / FAIL_BEFORE_DISPATCH / FAIL_AFTER_DISPATCH / TIMEOUT / STREAM_INTERRUPT / USAGE_DRIFT /
  * LATE_CALLBACK / DOUBLE_CALLBACK。
  * 提供「供应商侧账本」视图（SupplierChargeStorePort），用于对账测试。
@@ -32,7 +37,8 @@ public class MockSupplier implements SupplierSpi {
     private final CallbackSenderPort callbackSender;
     private final TimeService time;
     private final long defaultDelayMillis;
-    private final long defaultDriftPercent; // 正数=用量上浮，负数=下浮（对账差额来源）
+    private final long defaultDriftPercent;
+    private final ObjectMapper json = new ObjectMapper();
 
     private final Map<String, Fault> faultByRequest = new HashMap<>();
     private final Map<String, Long> driftPercentByRequest = new HashMap<>();
@@ -77,7 +83,7 @@ public class MockSupplier implements SupplierSpi {
     }
 
     @Override
-    public SupplierResponse call(SupplierCallRequest request, HoldContext holdContext) throws SupplierCallException {
+    public StreamedResponse call(SupplierCallRequest request, HoldContext holdContext) throws SupplierCallException {
         Fault fault = faultByRequest.getOrDefault(request.requestId(), Fault.NONE);
         long delay = delayMillisByRequest.getOrDefault(request.requestId(), defaultDelayMillis);
         if (fault == Fault.DELAY || fault == Fault.TIMEOUT) {
@@ -90,11 +96,6 @@ public class MockSupplier implements SupplierSpi {
         // —— 请求已发出（以下任何结果都必须按「可能已计费」处理，P2/Q6）——
         long units = resolveUnits(request, fault);
         String supplierRequestId = "sup-" + UUID.randomUUID();
-        boolean completed = true;
-        if (fault == Fault.STREAM_INTERRUPT) {
-            // 流中断：只产生部分用量，结果未知
-            completed = false;
-        }
         if (fault == Fault.FAIL_AFTER_DISPATCH) {
             // 已发出后供应商内部失败：计费与否未知 → 不记录用量、抛 dispatched 异常
             throw new SupplierCallException("mock: supplier error after dispatch", true, 0, null);
@@ -107,19 +108,31 @@ public class MockSupplier implements SupplierSpi {
         }
         // 供应商侧账本：完成即计费
         bill(request, holdContext, supplierRequestId, units);
-        if (fault == Fault.STREAM_INTERRUPT) {
-            throw new SupplierCallException("mock: stream interrupted", true, units, null);
-        }
+        String body = "{\"id\":\"" + supplierRequestId + "\",\"model\":\"" + request.model()
+                + "\",\"usage\":{\"total_tokens\":" + units + "},\"completed\":" + (fault != Fault.STREAM_INTERRUPT)
+                + "}";
         if (fault == Fault.LATE_CALLBACK || fault == Fault.DOUBLE_CALLBACK) {
             scheduleCallback(request.requestId(), supplierRequestId, units, fault == Fault.DOUBLE_CALLBACK);
         }
-        return new SupplierResponse(supplierRequestId, request.model(), units, completed,
-                "{\"model\":\"" + request.model() + "\",\"usage\":{\"total_tokens\":" + units + "}}");
+        if (fault == Fault.STREAM_INTERRUPT) {
+            // 流中断：先吐出部分数据再断流（客户端读到 IOException，Q6 语义）
+            String partial = "{\"id\":\"" + supplierRequestId + "\",\"partial\":true}";
+            return new StreamedResponse(new ThrowingInputStream(partial), Map.of("x-supplier-request-id",
+                    List.of(supplierRequestId)), () -> { });
+        }
+        return new StreamedResponse(new ByteArrayInputStream(body.getBytes()),
+                Map.of("x-supplier-request-id", List.of(supplierRequestId)), () -> { });
     }
 
     @Override
-    public ActualUsage parseUsage(SupplierResponse response) {
-        return new ActualUsage(response.supplierRequestId(), response.usageUnits(), response.completed());
+    public ActualUsage parseUsage(String responseBody) {
+        try {
+            JsonNode root = json.readTree(responseBody);
+            long tokens = root.path("usage").path("total_tokens").asLong(0);
+            return new ActualUsage(root.path("id").asText(null), tokens, root.path("completed").asBoolean(true));
+        } catch (IOException e) {
+            return new ActualUsage(null, 0, false);
+        }
     }
 
     @Override
@@ -163,6 +176,29 @@ public class MockSupplier implements SupplierSpi {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SupplierCallException("mock: interrupted", true, 0, e);
+        }
+    }
+
+    /** 先输出部分内容再抛 IOException 的流（模拟流中断）。 */
+    static class ThrowingInputStream extends InputStream {
+        private final byte[] prefix;
+        private int pos = 0;
+        private boolean thrown = false;
+
+        ThrowingInputStream(String prefix) {
+            this.prefix = prefix.getBytes();
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (pos < prefix.length) {
+                return prefix[pos++];
+            }
+            if (!thrown) {
+                thrown = true;
+                throw new IOException("mock: stream interrupted by supplier");
+            }
+            return -1;
         }
     }
 }

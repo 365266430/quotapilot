@@ -32,13 +32,15 @@ public class RequestController {
     }
 
     public record CreateReq(String requestId, String userId, String teamId, String taskId, String model,
-                            Long declaredEstimatedUnits, String payload, Boolean reserveOnly, Long ttlSeconds) {}
+                            Long declaredEstimatedUnits, String payload, Boolean reserveOnly, Long ttlSeconds,
+                            String supplier) {}
 
     @PostMapping("/v1/requests")
     public GatewayResult create(@RequestBody CreateReq req) {
         return orchestrator.execute(new GatewayRequest(req.requestId(), req.userId(), req.teamId(), req.taskId(),
                 req.model(), req.declaredEstimatedUnits(), req.payload(),
-                Boolean.TRUE.equals(req.reserveOnly()), req.ttlSeconds() == null ? 0 : req.ttlSeconds(), null));
+                Boolean.TRUE.equals(req.reserveOnly()), req.ttlSeconds() == null ? 0 : req.ttlSeconds(), null,
+                req.supplier()));
     }
 
     @GetMapping("/v1/requests/{requestId}")
