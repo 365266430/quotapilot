@@ -44,10 +44,14 @@ public class PriceCatalog {
         }
         List<PriceVersion> existing = port.findBySku(sku.key());
         long nextVersion = existing.stream().mapToLong(PriceVersion::getVersion).max().orElse(0) + 1;
+        // 关闭被新版本覆盖的旧版本窗口：closeAt 后必须回写持久化，保证审计/回溯口径正确
         existing.stream()
                 .filter(v -> v.getEffectiveTo() == null || v.getEffectiveTo().isAfter(effectiveFrom))
                 .filter(v -> !v.getEffectiveFrom().isAfter(effectiveFrom))
-                .forEach(v -> v.closeAt(effectiveFrom));
+                .forEach(v -> {
+                    v.closeAt(effectiveFrom);
+                    port.save(v);
+                });
         PriceVersion created = new PriceVersion(null, sku.key(), sku.usageType(), pricePerUnitMinor, currency,
                 nextVersion, effectiveFrom, null);
         port.save(created);

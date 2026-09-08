@@ -69,6 +69,11 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", e.getBindingResult().toString());
     }
 
+    @ExceptionHandler(java.lang.IllegalArgumentException.class)
+    public ResponseEntity<ApiError> illegalArgument(java.lang.IllegalArgumentException e) {
+        return build(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", e.getMessage());
+    }
+
     @ExceptionHandler(io.quotapilot.common.Amounts.ArithmeticOverflowException.class)
     public ResponseEntity<ApiError> overflow(io.quotapilot.common.Amounts.ArithmeticOverflowException e) {
         return build(HttpStatus.BAD_REQUEST, "ESTIMATE_OVERFLOW", e.getMessage());

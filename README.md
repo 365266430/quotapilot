@@ -37,10 +37,12 @@
 | M4 | 结算与释放 | 成功结算退余量 / 超预留 P0 告警 / 失败释放转敞口 / 超时 sweeper 转敞口；全程幂等 |
 | M5 | 对账修正 | 供应商账单按 supplierRequestId 对齐 → 差额 ADJUST（幂等键防重）→ 敞口收敛 |
 | M6 | 网关编排 | 预留→调用→结算编排；失败语义按「是否已触达供应商」区分（诚实计量 P2） |
+| M7 | 限流器 | 三维度：请求数(每秒滑动窗口)/Token/计费单位(每分钟令牌桶)，Redis Lua 原子；Redis 丢失按 DB 重建不永久失真；结算后按实际用量返还/补扣 |
 | M8 | 计量事件 | `(requestId, source, seq)` 唯一约束幂等入库；分页明细 |
-| M9 | 面板告警 | limit/settled/held/exposure/available 四值视图（DB 权威重算）+ 内置告警 + 抑制窗口 + Webhook |
-| M10 | 供应商 SPI | 统一 SPI；MockSupplier 支持注入 DELAY/TIMEOUT/断流/漂移/迟到回调/双重回调等故障 + 供应商侧账本 |
+| M9 | 面板告警 | limit/settled/held/exposure/available 四值视图（DB 权威重算）+ 内置告警 + 抑制窗口 + Webhook + 周期评估调度 |
+| M10 | 供应商 SPI | 统一 SPI（流式 StreamedResponse）+ 注册表；MockSupplier 故障注入 + 供应商侧账本；**OpenAICompatibleAdapter（V1.1）：真实 HTTP chat/completions 流式 + SSE usage 解析** |
 | M11 | 基础设施 | 幂等表、Outbox（与业务同事务）、sweeper（过期预留→敞口→封顶关闭、Redis 对账重建）、traceId、分布式锁 |
+| M5 自动化 | 对账调度 | 周期自动对账（可配，默认 1h）+ 手工触发；差额 ADJUST 幂等 |
 
 ## 快速开始
 
@@ -60,24 +62,26 @@ mvn spring-boot:run -Dspring-boot.run.profiles=postgres \
 ## API 一览（V1）
 
 ```
-POST   /v1/quotas                        # 配置额度(M1)；POST /v1/quotas/{teamId}/members 团队成员
+POST   /v1/quotas                        # 配置额度(M1)；POST /v1/quotas/{teamId}/members 团队成员（分摊限额自动迁移）
 POST   /v1/prices/versions               # 发布价格版本(M2)
-POST   /v1/requests                      # 预留并发出请求(M3/M6)，reserveOnly=true 仅预留
+POST   /v1/requests                      # 预留并发出请求(M3/M6)，reserveOnly=true 仅预留；supplier 选择适配器(mock/openai)
+POST   /v1/requests/stream               # [V1.1] 流式代理(M6)：SSE 透传 + 断连检测 → 取消上游 + 敞口(Q6)
 GET    /v1/requests/{id}                 # 状态 RESERVED/SETTLED/RELEASED(+Exposure 视图)
 DELETE /v1/requests/{id}                 # 取消释放(M4)
 POST   /v1/callbacks/{supplier}          # 供应商用量回调(M8，重复投递 → 409 DUPLICATE_EVENT)
 GET    /v1/usages?accountId=             # 使用明细(M8)
 GET    /v1/accounts/{id}/balance         # 实时余额(M9)
 GET    /v1/dashboards?scope={accountId}  # 面板+告警(M9)
-POST   /v1/admin/reconcile               # 手工对账(M5)
+POST   /v1/admin/reconcile               # 手工对账(M5)；另有周期自动对账调度
 POST   /v1/admin/sweep                   # 手工补偿(M11)
 POST   /v1/admin/accounts/{id}/status    # BLOCKED 硬止损(M1)
+POST   /v1/admin/rate-limits/{accountId} # [V1.1] 限流规则(M7，三维度)
 GET    /v1/admin/supplier-ledger         # 供应商侧账本(M10，对账测试)
 ```
 
-错误码：`402 QUOTA_EXCEEDED` / `402 ACCOUNT_BLOCKED`、`403 NO_QUOTA_CONFIGURED`、`409 REQUEST_STATE_CONFLICT`、`409 DUPLICATE_EVENT`、`429 RATE_LIMITED`(V1.1)、`503 HOLD_FAILED`；所有错误结构化为 `{code, message, traceId}`。
+错误码：`402 QUOTA_EXCEEDED` / `402 ACCOUNT_BLOCKED`、`403 NO_QUOTA_CONFIGURED`、`409 REQUEST_STATE_CONFLICT`、`409 DUPLICATE_EVENT`、`429 RATE_LIMITED`(带 Retry-After)、`503 HOLD_FAILED`；所有错误结构化为 `{code, message, traceId}`。
 
-## 自动化验收（V1，全部通过）
+## 自动化验收（全部通过，37 用例）
 
 | 验收项 | 测试 |
 |---|---|
@@ -88,8 +92,13 @@ GET    /v1/admin/supplier-ledger         # 供应商侧账本(M10，对账测试
 | Q8 释放后仍计费 → 敞口宽限期过按 estimate 封顶关闭并告警 | `FaultInjectionEndToEndIT` |
 | Q5 价格快照：v3 生效期发起、v4 生效期结算仍按 v3 | `M1M2DomainTest` |
 | P3 账本可回放审计：流水重算余额与面板一致 | `FaultInjectionEndToEndIT` + `M3M4FlowTest` |
-| M1 七级解析优先级 + 团队分摊 | `M1M2DomainTest` |
+| M1 七级解析优先级 + 团队分摊（含成员变化限额迁移） | `M1M2DomainTest` + `V11OpsIT` |
+| M7 同一秒 200 请求阈值 100 → 恰好 100 通过；Redis 丢失按 DB 重建；429+Retry-After | `M7RateLimitIT` |
+| M10/M6 OpenAI 兼容真实 HTTP SSE：非流式结算 + 流式透传 + 元事件 | `M6OpenAIStreamIT` |
+| Q6 客户端中途断连（真实 RST）：取消信号送达上游、上游照常计费、迟到回调收敛 | `M6OpenAIStreamIT` |
+| M6 上游突断：协议语义判定提前中断 → 敞口 → 宽限期封顶关闭 | `M6OpenAIStreamIT` |
 | API 契约全链路（含 402/404/409 语义） | `ApiContractIT` |
+| 调度器冒烟（自动对账 / 告警评估）+ M9 阈值告警 | `V11OpsIT` |
 
 ## 边界情形决策表落地（规范 §6）
 
@@ -105,6 +114,7 @@ GET    /v1/admin/supplier-ledger         # 供应商侧账本(M10，对账测试
 ## 环境偏差与已知限制
 
 - **测试基础设施**：环境无 Docker，Testcontainers 不可用 → 集成测试采用 H2（PostgreSQL 兼容模式）+ 本机真实 Redis 3.0（Lua 脚本按 Redis 3.0 语法编写：多字段用 HMSET）。生产仍以 PostgreSQL 为权威账本（`postgres` profile）。
-- **V1.1 未做**（规范里程碑约定）：真实 OpenAI 协议适配器、完整流式代理与断连恢复、M7 限流器、面板告警补全。
-- 团队分摊语义：`sharedAmongMembers=true` 按成员数向上取整分摊到成员独立账户；成员变更后存量成员账户限额不自动迁移（新请求按新成员数解析）。
-- V1 供应商调用为同步模型，DELETE 取消按「未产生外部费用」处理；在途请求由超时 sweeper 收敛。
+- **OpenAI 适配器**：真实协议已实现并以内嵌 OpenAI 兼容上游（真实 HTTP SSE）端到端验证；对真实 api.openai.com 的联调仅需配置 `quotapilot.suppliers.openai.enabled=true` + base-url/api-key。`subscribeUsage` 返回空（OpenAI 无按请求拉取接口），对账走账单导入/回调。
+- **限流计数重建口径**：REQUESTS 用窗口内用量事件数、TOKENS 用用量合计、BILLING_UNITS 用账本结算额重建（DB 权威，近似窗口口径）。
+- 团队分摊：`sharedAmongMembers=true` 按成员数向上取整分摊到成员独立账户；成员变化自动迁移存量成员账户限额（在途请求按快照不受影响）。
+- V1 的同步取消（DELETE）按「未产生外部费用」处理；流式路径的断连已按 Q6 全语义处理（取消上游 + 敞口）。

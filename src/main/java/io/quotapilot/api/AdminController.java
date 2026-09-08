@@ -87,7 +87,7 @@ public class AdminController {
 
     public record RateLimitReq(long requestsPerSecond, long tokensPerMinute, long billingUnitsPerMinute) {}
 
-    @org.springframework.web.bind.annotation.PostMapping("/v1/admin/rate-limits")
+    @org.springframework.web.bind.annotation.PostMapping("/v1/admin/rate-limits/{id}")
     public io.quotapilot.ratelimit.domain.RateLimitRule setRateLimit(
             @org.springframework.web.bind.annotation.PathVariable("id") String accountId,
             @RequestBody RateLimitReq req) {

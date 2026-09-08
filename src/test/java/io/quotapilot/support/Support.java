@@ -120,6 +120,11 @@ public class Support {
         public void addMember(String teamId, String userId) {
             teamMembers.computeIfAbsent(teamId, k -> new java.util.HashSet<>()).add(userId);
         }
+
+        @Override
+        public List<String> listMembers(String teamId) {
+            return List.copyOf(teamMembers.getOrDefault(teamId, java.util.Set.of()));
+        }
     }
 
     public static class FakePrices implements PriceVersionPort {

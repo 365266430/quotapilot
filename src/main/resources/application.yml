@@ -31,6 +31,8 @@ quotapilot:
   exposure-grace-seconds: 300
   sweep-interval-ms: 10000
   outbox-poll-ms: 1000
+  reconcile-interval-ms: 3600000   # M5 自动对账周期（可配；1 小时）
+  alert-eval-interval-ms: 30000    # M9 实时告警评估周期
   system-default-limit-minor: 100000000   # 1000 元（1e-5 元/单位）
   default-currency: CNY
   low-available-warn-pct: 20

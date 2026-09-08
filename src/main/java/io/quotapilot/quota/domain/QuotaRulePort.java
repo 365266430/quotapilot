@@ -15,4 +15,7 @@ public interface QuotaRulePort {
     long countTeamMembers(String teamId);
 
     void addMember(String teamId, String userId);
+
+    /** [V1.1] 团队成员列表（限额迁移用）。 */
+    java.util.List<String> listMembers(String teamId);
 }

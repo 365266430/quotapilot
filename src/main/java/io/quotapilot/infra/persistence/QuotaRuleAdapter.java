@@ -79,6 +79,11 @@ public class QuotaRuleAdapter implements QuotaRulePort {
         }
     }
 
+    @Override
+    public List<String> listMembers(String teamId) {
+        return teamMembers.findByTeamId(teamId).stream().map(TeamMemberEntity::getUserId).toList();
+    }
+
     static QuotaRule toDomain(QuotaRuleEntity e) {
         return new QuotaRule(e.ruleId, e.scopeType, e.scopeId, e.model, e.quotaLimitMinor, e.currency,
                 e.sharedAmongMembers);

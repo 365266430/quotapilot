@@ -50,6 +50,33 @@ public class QuotaService {
 
     public void addTeamMember(String teamId, String userId) {
         rulePort.addMember(teamId, userId);
+        migrateSharedTeamLimits(teamId);
+    }
+
+    /**
+     * [V1.1] 团队分摊限额迁移：成员数变化 → 重算所有成员账户限额并同步 Redis（新请求立即生效；
+     * 在途请求仍按发起时快照执行，P5）。
+     */
+    private void migrateSharedTeamLimits(String teamId) {
+        rulePort.listActive().stream()
+                .filter(r -> (r.scopeType() == io.quotapilot.ledger.domain.ScopeType.TEAM
+                        || r.scopeType() == io.quotapilot.ledger.domain.ScopeType.TEAM_MODEL)
+                        && teamId.equals(r.scopeId()) && r.sharedAmongMembers())
+                .findFirst()
+                .ifPresent(rule -> {
+                    long perMember = perMemberLimit(teamId, rule.quotaLimitMinor());
+                    for (String member : rulePort.listMembers(teamId)) {
+                        accountPort.findByScope(io.quotapilot.ledger.domain.ScopeType.USER, member)
+                                .ifPresent(acct -> {
+                                    if (acct.quotaLimitMinor() != perMember) {
+                                        accountPort.updateLimit(acct.accountId(), perMember);
+                                        gate.reconcile(acct.accountId(), perMember,
+                                                accountPort.settledMinor(acct.accountId()),
+                                                reservationRepo.sumActiveHolds(acct.accountId()));
+                                    }
+                                });
+                    }
+                });
     }
 
     /** 团队限额分摊到成员：限额 = 团队总额 / 成员数（向上取整）。 */

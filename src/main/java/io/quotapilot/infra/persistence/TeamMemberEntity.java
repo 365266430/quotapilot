@@ -23,4 +23,8 @@ public class TeamMemberEntity {
         this.teamId = teamId;
         this.userId = userId;
     }
+
+    public String getUserId() {
+        return userId;
+    }
 }
