@@ -39,25 +39,29 @@
 | M6 | 网关编排 | 预留→调用→结算编排；失败语义按「是否已触达供应商」区分（诚实计量 P2） |
 | M7 | 限流器 | 三维度：请求数(每秒滑动窗口)/Token/计费单位(每分钟令牌桶)，Redis Lua 原子；Redis 丢失按 DB 重建不永久失真；结算后按实际用量返还/补扣 |
 | M8 | 计量事件 | `(requestId, source, seq)` 唯一约束幂等入库；分页明细 |
-| M9 | 面板告警 | limit/settled/held/exposure/available 四值视图（DB 权威重算）+ 内置告警 + 抑制窗口 + Webhook + 周期评估调度 |
+| M9 | 面板告警 | limit/settled/held/exposure/available 四值视图（DB 权威重算）+ 内置告警 + 抑制窗口 + Webhook + 周期评估调度 + **Web 面板**（`http://localhost:8080/` 单页，自动刷新） |
 | M10 | 供应商 SPI | 统一 SPI（流式 StreamedResponse）+ 注册表；MockSupplier 故障注入 + 供应商侧账本；**OpenAICompatibleAdapter（V1.1）：真实 HTTP chat/completions 流式 + SSE usage 解析** |
-| M11 | 基础设施 | 幂等表、Outbox（与业务同事务）、sweeper（过期预留→敞口→封顶关闭、Redis 对账重建）、traceId、分布式锁 |
+| M11 | 基础设施 | 幂等表、Outbox（与业务同事务 + FAILED 滞留重驱动）、sweeper（过期预留→敞口→封顶关闭、Redis 对账重建）、traceId、分布式锁 |
 | M5 自动化 | 对账调度 | 周期自动对账（可配，默认 1h）+ 手工触发；差额 ADJUST 幂等 |
 
 ## 快速开始
 
 ```bash
 # 依赖：Java 17+、Maven 3.9+、Redis（默认 localhost:6379）
-mvn test          # 全量自动化验收（25 用例，含真实 Redis Lua 并发压测）
+mvn test          # 全量自动化验收（39 用例，含真实 Redis Lua 并发压测）
 mvn spring-boot:run
+# Web 面板：http://localhost:8080/
 ```
 
 默认使用 H2（PostgreSQL 兼容模式）；生产切换：
 
 ```bash
+# 先执行 docs/schema-postgres.sql（参考 DDL），或依赖 ddl-auto 自动建表
 mvn spring-boot:run -Dspring-boot.run.profiles=postgres \
   -Dspring-boot.run.jvmArguments="-DQUOTAPILOT_PG_URL=jdbc:postgresql://host:5432/quotapilot ..."
 ```
+
+真实 OpenAI 联调：设置 `QUOTAPILOT_OPENAI_API_KEY` 后运行 `OpenAiRealApiIT`（无凭据自动跳过）。
 
 ## API 一览（V1）
 

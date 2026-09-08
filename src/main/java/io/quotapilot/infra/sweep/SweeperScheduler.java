@@ -26,13 +26,15 @@ public class SweeperScheduler {
     private final AccountPort accountPort;
     private final LedgerQueryPort ledgerQuery;
     private final RedisLock lock;
+    private final io.quotapilot.infra.outbox.OutboxDispatcher outboxDispatcher;
 
     public SweeperScheduler(SweeperService sweeperService, AccountPort accountPort, LedgerQueryPort ledgerQuery,
-                            RedisLock lock) {
+                            RedisLock lock, io.quotapilot.infra.outbox.OutboxDispatcher outboxDispatcher) {
         this.sweeperService = sweeperService;
         this.accountPort = accountPort;
         this.ledgerQuery = ledgerQuery;
         this.lock = lock;
+        this.outboxDispatcher = outboxDispatcher;
     }
 
     @Scheduled(fixedDelayString = "${quotapilot.sweep-interval-ms:10000}")
@@ -44,6 +46,7 @@ public class SweeperScheduler {
             int holds = sweeperService.sweepExpiredReservations();
             int exposures = sweeperService.sweepExpiredExposures();
             int rebuilt = sweeperService.reconcileRedis(accountPort, ledgerQuery);
+            outboxDispatcher.requeueFailed(); // P7：Outbox 滞留消息重驱动（DB 成功 ⇒ 事件必达）
             if (holds + exposures + rebuilt > 0) {
                 log.info("sweeper: 过期预留={} 敞口收敛={} Redis重建={}", holds, exposures, rebuilt);
             }

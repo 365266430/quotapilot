@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuotaPilot 实时预算面板</title>
+<style>
+  :root { --bg:#0f1420; --card:#1a2233; --line:#2a3550; --fg:#dfe6f3; --dim:#8fa0bf;
+          --ok:#4cc38a; --warn:#f0b429; --bad:#f16a6a; --accent:#5b9cff; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:14px/1.6 "Segoe UI","Microsoft YaHei",sans-serif; padding:24px; }
+  h1 { font-size:20px; margin-bottom:4px; }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:20px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin:12px 0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .kpi .label { color:var(--dim); font-size:12px; }
+  .kpi .value { font-size:22px; font-weight:600; margin-top:2px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin:10px 0 18px; }
+  input, button { background:var(--card); color:var(--fg); border:1px solid var(--line);
+                  border-radius:8px; padding:8px 12px; font-size:13px; }
+  input { min-width:260px; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:10px; overflow:hidden; }
+  th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); font-size:13px; }
+  th { color:var(--dim); font-weight:500; background:#16203a; }
+  .tag { display:inline-block; padding:1px 8px; border-radius:20px; font-size:12px; }
+  .tag.P0, .tag.BAD { background:var(--bad); color:#fff; }
+  .tag.WARN { background:var(--warn); color:#222; }
+  .tag.INFO, .tag.OK { background:var(--ok); color:#0b2b1c; }
+  section { margin-bottom:26px; }
+  h2 { font-size:15px; color:var(--dim); margin-bottom:8px; font-weight:500; }
+  .bar { height:8px; background:#101828; border-radius:6px; overflow:hidden; margin-top:6px; }
+  .bar > i { display:block; height:100%; background:var(--accent); }
+  #err { color:var(--bad); font-size:12px; min-height:18px; }
+  .mono { font-family:Consolas,monospace; font-size:12px; color:var(--dim); }
+</style>
+</head>
+<body>
+<h1>QuotaPilot 实时预算面板</h1>
+<div class="sub">预留 — 结算 — 释放账本 · 权威口径 = DB 账本重算（P3）· 每 3s 自动刷新</div>
+<div id="err"></div>
+
+<section>
+  <div class="row">
+    <input id="accountId" placeholder="账户 ID（accountId，创建额度后由请求返回）">
+    <button onclick="loadAccount()">查询账户</button>
+    <button onclick="loadAlerts()">刷新告警</button>
+    <button onclick="admin('/v1/admin/sweep')">手工补偿 sweep</button>
+    <button onclick="admin('/v1/admin/reconcile')">手工对账</button>
+  </div>
+  <div class="grid">
+    <div class="card kpi"><div class="label">总配额 limit</div><div class="value" id="k-limit">–</div></div>
+    <div class="card kpi"><div class="label">已结算 settled</div><div class="value" id="k-settled">–</div></div>
+    <div class="card kpi"><div class="label">在途预留 held</div><div class="value" id="k-held">–</div></div>
+    <div class="card kpi"><div class="label">未决敞口 exposure</div><div class="value" id="k-expo">–</div></div>
+    <div class="card kpi"><div class="label">可用 available</div><div class="value" id="k-avail">–</div></div>
+  </div>
+  <div class="card"><div class="label" style="color:var(--dim);font-size:12px">预算使用率</div>
+    <div class="bar"><i id="usage-bar" style="width:0%"></i></div></div>
+</section>
+
+<section>
+  <h2>最近告警（M9，含抑制窗口）</h2>
+  <table id="alerts"><thead><tr><th>级别</th><th>类型</th><th>账户</th><th>请求</th><th>信息</th><th>时间</th></tr></thead>
+  <tbody></tbody></table>
+</section>
+
+<section>
+  <h2>请求状态（输入 requestId）</h2>
+  <div class="row"><input id="requestId" placeholder="requestId"><button onclick="loadRequest()">查询</button></div>
+  <pre class="mono" id="request-view" style="background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre-wrap"></pre>
+</section>
+
+<section>
+  <h2>使用明细（M8，最近 20 条）</h2>
+  <table id="usages"><thead><tr><th>时间</th><th>requestId</th><th>来源</th><th>SKU</th><th>数量</th></tr></thead>
+  <tbody></tbody></table>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => n == null ? '–' : Number(n).toLocaleString();
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  let body; try { body = JSON.parse(text); } catch (e) { body = text; }
+  if (!r.ok) { throw new Error((body && body.code ? body.code + ': ' : '') + r.status); }
+  return body;
+}
+async function loadAccount() {
+  const id = $('accountId').value.trim();
+  if (!id) return;
+  try {
+    const b = await api('/v1/accounts/' + id + '/balance');
+    $('k-limit').textContent = fmt(b.limitMinor);
+    $('k-settled').textContent = fmt(b.settledMinor);
+    $('k-held').textContent = fmt(b.heldMinor);
+    $('k-expo').textContent = fmt(b.exposureOpenMinor) + '（' + b.exposureOpenCount + '笔）';
+    $('k-avail').textContent = fmt(b.availableMinor);
+    $('k-avail').style.color = b.availableMinor < 0 ? 'var(--bad)' : 'var(--fg)';
+    const pct = b.limitMinor > 0 ? Math.round((b.limitMinor - b.availableMinor) * 100 / b.limitMinor) : 0;
+    $('usage-bar').style.width = Math.max(0, Math.min(100, pct)) + '%';
+    $('usage-bar').style.background = pct > 90 ? 'var(--bad)' : pct > 70 ? 'var(--warn)' : 'var(--accent)';
+    loadUsages(id);
+    $('err').textContent = '';
+  } catch (e) { $('err').textContent = '账户查询失败: ' + e.message; }
+}
+async function loadAlerts() {
+  try {
+    const list = await api('/v1/admin/alerts');
+    $('alerts').tBodies[0].innerHTML = (list || []).map(a =>
+      `<tr><td><span class="tag ${a.severity}">${a.severity}</span></td><td>${a.type}</td>` +
+      `<td class="mono">${a.accountId || ''}</td><td class="mono">${a.requestId || ''}</td>` +
+      `<td>${a.message}</td><td class="mono">${(a.at || '').replace('T', ' ').slice(0, 19)}</td></tr>`).join('');
+  } catch (e) { $('err').textContent = '告警加载失败: ' + e.message; }
+}
+async function loadRequest() {
+  const id = $('requestId').value.trim();
+  if (!id) return;
+  try { $('request-view').textContent = JSON.stringify(await api('/v1/requests/' + id), null, 2); }
+  catch (e) { $('request-view').textContent = '查询失败: ' + e.message; }
+}
+async function loadUsages(accountId) {
+  try {
+    const u = await api('/v1/usages?accountId=' + accountId + '&page=0&size=20');
+    $('usages').tBodies[0].innerHTML = (u.events || []).map(e =>
+      `<tr><td class="mono">${(e.occurredAt || '').replace('T', ' ').slice(0, 19)}</td>` +
+      `<td class="mono">${e.requestId}</td><td>${e.source}</td><td>${e.sku}</td><td>${fmt(e.quantity)}</td></tr>`).join('');
+  } catch (e) { /* 静默 */ }
+}
+async function admin(path) {
+  try {
+    const r = await api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    $('err').textContent = '操作成功: ' + JSON.stringify(r).slice(0, 120);
+  } catch (e) { $('err').textContent = '操作失败: ' + e.message; }
+}
+setInterval(() => { if ($('accountId').value.trim()) loadAccount(); loadAlerts(); }, 3000);
+loadAlerts();
+</script>
+</body>
+</html>

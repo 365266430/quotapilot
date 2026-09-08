@@ -147,5 +147,10 @@ class ApiContractIT {
         var missing = rest.getForEntity("/v1/accounts/nope-" + UUID.randomUUID() + "/balance", Map.class);
         assertThat(missing.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(missing.getBody().get("code")).isEqualTo("NOT_FOUND");
+
+        // 15. M9 Web 面板（静态单页）
+        var panel = rest.getForEntity("/", String.class);
+        assertThat(panel.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(panel.getBody()).contains("QuotaPilot").contains("available");
     }
 }

@@ -65,6 +65,29 @@ public class OutboxDispatcher {
         dispatchPending();
     }
 
+    /**
+     * [M11/P7] sweeper 重驱动：FAILED 滞留消息（投递连续失败 20 次）重置为 PENDING 重新投递。
+     * 仅重驱创建超过 10 分钟的消息，避免与正常重试竞争；DB 成功 ⇒ 事件必达的最终兜底。
+     */
+    @Transactional
+    public int requeueFailed() {
+        java.util.List<OutboxEntity> failed = repo.findTop50ByStatusOrderByCreatedAtAsc("FAILED");
+        java.time.Instant threshold = java.time.Instant.now().minusSeconds(600);
+        int requeued = 0;
+        for (OutboxEntity e : failed) {
+            if (e.createdAt != null && e.createdAt.isBefore(threshold)) {
+                e.status = "PENDING";
+                e.attempts = 0;
+                repo.save(e);
+                requeued++;
+            }
+        }
+        if (requeued > 0) {
+            log.warn("Outbox 重驱动: {} 条 FAILED 消息已重置为 PENDING", requeued);
+        }
+        return requeued;
+    }
+
     private void deliver(OutboxMessage msg) {
         for (Consumer<OutboxMessage> listener : listeners) {
             try {

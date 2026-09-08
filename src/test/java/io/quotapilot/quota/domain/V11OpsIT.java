@@ -35,6 +35,7 @@ class V11OpsIT {
     // 测试配置禁用了调度器（scheduler.enabled=false）：手动构造以验证调度逻辑本身
     @Autowired io.quotapilot.reconcile.domain.ReconciliationService reconciliationService;
     @Autowired io.quotapilot.infra.redis.RedisLock redisLock;
+    @Autowired io.quotapilot.infra.persistence.OutboxJpaRepo outboxRepo;
 
     @Test
     void 团队分摊_成员加入_存量成员账户限额迁移() {
@@ -78,6 +79,28 @@ class V11OpsIT {
         new io.quotapilot.infra.sweep.ReconcileScheduler(reconciliationService, redisLock).reconcile();
         // 告警评估（全账户扫描）：无异常
         new io.quotapilot.infra.alert.AlertEvaluationScheduler(accountPort, dashboard, redisLock).evaluate();
+    }
+
+    @Test
+    void M11_OutboxFAILED滞留消息_sweeper重驱动后必达() {
+        // 模拟一条投递失败且已滞留超 10 分钟的 Outbox 消息
+        io.quotapilot.infra.persistence.OutboxEntity failed = new io.quotapilot.infra.persistence.OutboxEntity();
+        failed.aggregateType = "test";
+        failed.aggregateId = "agg-" + UUID.randomUUID();
+        failed.eventType = "test.stuck";
+        failed.payloadJson = "{}";
+        failed.status = "FAILED";
+        failed.attempts = 20;
+        failed.createdAt = java.time.Instant.now().minusSeconds(3600);
+        outboxRepo.save(failed);
+
+        new io.quotapilot.infra.sweep.ReconcileScheduler(reconciliationService, redisLock); // 调度器逻辑 smoke
+        io.quotapilot.infra.outbox.OutboxDispatcher dispatcher =
+                new io.quotapilot.infra.outbox.OutboxDispatcher(outboxRepo);
+        assertThat(dispatcher.requeueFailed()).isGreaterThanOrEqualTo(1);   // FAILED → PENDING
+        dispatcher.dispatchPending();                                        // 投递（无消费者也标记 SENT）
+        io.quotapilot.infra.persistence.OutboxEntity after = outboxRepo.findById(failed.id).orElseThrow();
+        assertThat(after.status).isEqualTo("SENT");
     }
 
     @Test
