@@ -85,11 +85,16 @@ public class SettlementService {
             gateApplySafe(() -> gate.applyLateSettlement(r.getAccountId(), cost));
             return SettlementResult.settled(requestId, cost, 0, false);
         }
+        if (exposure.isPresent()
+                && exposure.get().getState() == io.quotapilot.ledger.domain.ExposureState.SETTLED) {
+            // 敞口已收敛：重复回调返回首次结果（幂等，P6）
+            return SettlementResult.duplicate(requestId, "SETTLED", cost, 0);
+        }
         // 无敞口（曾判定未触达供应商）但供应商回调到达 → 按 ADJUST 补收，幂等键防重（P6）
-        ledgerPort.adjust(new LedgerPort.AdjustCmd(requestId, r.getAccountId(), cost,
+        LedgerPort.AdjustResult ar = ledgerPort.adjust(new LedgerPort.AdjustCmd(requestId, r.getAccountId(), cost,
                 "LATE_USAGE_AFTER_RELEASE", "callback:" + requestId, "settle:" + requestId, r.getTraceId()));
         gateApplySafe(() -> gate.adjustSettled(r.getAccountId(), cost));
-        return SettlementResult.adjusted(requestId, cost);
+        return new SettlementResult(requestId, "SETTLED", cost, cost, 0, false, ar.duplicate(), !ar.duplicate());
     }
 
     /** 释放预留（失败/取消/断连/超时到期）。externalRisk=true 时必须转敞口等待对账（Q6/Q8）。 */
