@@ -1,0 +1,56 @@
+spring:
+  application:
+    name: quotapilot
+  datasource:
+    # 测试/开发默认 H2（PostgreSQL 兼容模式）；生产切换 PostgreSQL（profile=postgres）
+    url: jdbc:h2:mem:quotapilot;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+  data:
+    redis:
+      host: ${QUOTAPILOT_REDIS_HOST:localhost}
+      port: ${QUOTAPILOT_REDIS_PORT:6379}
+  task:
+    scheduling:
+      pool:
+        size: 4
+
+server:
+  port: 8080
+
+quotapilot:
+  scheduler:
+    enabled: true
+  reserve-ttl-seconds: 120
+  exposure-grace-seconds: 300
+  sweep-interval-ms: 10000
+  outbox-poll-ms: 1000
+  system-default-limit-minor: 100000000   # 1000 元（1e-5 元/单位）
+  default-currency: CNY
+  low-available-warn-pct: 20
+  exposure-backlog-threshold: 10
+  alert-cooldown-seconds: 60
+  alert-webhook-url: ""
+  mock:
+    default-delay-millis: 0
+    default-drift-percent: 0
+
+---
+spring:
+  config:
+    activate:
+      on-profile: postgres
+  datasource:
+    url: ${QUOTAPILOT_PG_URL:jdbc:postgresql://localhost:5432/quotapilot}
+    driver-class-name: org.postgresql.Driver
+    username: ${QUOTAPILOT_PG_USER:quotapilot}
+    password: ${QUOTAPILOT_PG_PASSWORD:quotapilot}
+  jpa:
+    hibernate:
+      ddl-auto: validate
