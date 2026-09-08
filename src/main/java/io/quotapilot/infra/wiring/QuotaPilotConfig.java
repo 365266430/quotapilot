@@ -79,9 +79,34 @@ public class QuotaPilotConfig {
     }
 
     @Bean
-    public io.quotapilot.supplier.domain.SupplierRegistry supplierRegistry(MockSupplier mockSupplier) {
-        return new io.quotapilot.supplier.domain.SupplierRegistry(java.util.Map.of(
-                mockSupplier.name(), mockSupplier));
+    public io.quotapilot.supplier.domain.SupplierRegistry supplierRegistry(java.util.List<io.quotapilot.supplier.domain.SupplierSpi> suppliers) {
+        java.util.Map<String, io.quotapilot.supplier.domain.SupplierSpi> byName = new java.util.HashMap<>();
+        for (io.quotapilot.supplier.domain.SupplierSpi s : suppliers) {
+            byName.put(s.name(), s);
+        }
+        return new io.quotapilot.supplier.domain.SupplierRegistry(byName);
+    }
+
+    /** [M10/V1.1] OpenAI 兼容适配器：默认关闭，配置 quotapilot.suppliers.openai.enabled=true 开启。 */
+    @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(prefix = "quotapilot.suppliers.openai",
+            name = "enabled", havingValue = "true")
+    public io.quotapilot.supplier.openai.OpenAICompatibleAdapter openAiCompatibleAdapter(
+            @Value("${quotapilot.suppliers.openai.base-url:https://api.openai.com/v1}") String baseUrl,
+            @Value("${quotapilot.suppliers.openai.api-key:}") String apiKey,
+            @Value("${quotapilot.suppliers.openai.default-max-tokens:1024}") long defaultMaxTokens,
+            @Value("${quotapilot.suppliers.openai.connect-timeout-ms:5000}") long connectTimeoutMs) {
+        return new io.quotapilot.supplier.openai.OpenAICompatibleAdapter(baseUrl, apiKey, defaultMaxTokens,
+                connectTimeoutMs);
+    }
+
+    @Bean
+    public io.quotapilot.gateway.domain.StreamingProxyService streamingProxyService(
+            ReservationEngine engine, io.quotapilot.ratelimit.domain.RateLimiter rateLimiter,
+            io.quotapilot.supplier.domain.SupplierRegistry registry, SettlementService settlementService,
+            UsageEventAdapter usageEvents, TimeService time) {
+        return new io.quotapilot.gateway.domain.StreamingProxyService(engine, rateLimiter, registry,
+                settlementService, usageEvents, time);
     }
 
     @Bean

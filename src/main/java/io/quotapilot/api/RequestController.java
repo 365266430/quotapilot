@@ -23,12 +23,15 @@ public class RequestController {
     private final GatewayOrchestrator orchestrator;
     private final RequestQueryService query;
     private final SettlementService settlementService;
+    private final io.quotapilot.gateway.domain.StreamingProxyService streamingProxy;
 
     public RequestController(GatewayOrchestrator orchestrator, RequestQueryService query,
-                             SettlementService settlementService) {
+                             SettlementService settlementService,
+                             io.quotapilot.gateway.domain.StreamingProxyService streamingProxy) {
         this.orchestrator = orchestrator;
         this.query = query;
         this.settlementService = settlementService;
+        this.streamingProxy = streamingProxy;
     }
 
     public record CreateReq(String requestId, String userId, String teamId, String taskId, String model,
@@ -52,5 +55,22 @@ public class RequestController {
     @DeleteMapping("/v1/requests/{requestId}")
     public SettlementResult cancel(@PathVariable String requestId) {
         return settlementService.release(requestId, ReleaseReason.CANCELLED, false);
+    }
+
+    /**
+     * [M6/V1.1] 流式代理：SSE 透传上游响应，断连检测 → 尽力取消上游 + 敞口（Q6）。
+     */
+    @PostMapping(value = "/v1/requests/stream", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
+    public org.springframework.http.ResponseEntity<org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody> stream(
+            @RequestBody CreateReq req) {
+        var exec = streamingProxy.open(new GatewayRequest(req.requestId(), req.userId(), req.teamId(),
+                req.taskId(), req.model(), req.declaredEstimatedUnits(), req.payload(),
+                Boolean.TRUE.equals(req.reserveOnly()), req.ttlSeconds() == null ? 0 : req.ttlSeconds(), null,
+                req.supplier()));
+        org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody body =
+                out -> streamingProxy.pump(exec, out);
+        return org.springframework.http.ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.TEXT_EVENT_STREAM)
+                .body(body);
     }
 }

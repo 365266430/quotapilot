@@ -44,6 +44,13 @@ quotapilot:
     requests-per-second: 100     # 系统默认限流（账户级规则可覆盖；0=不限）
     tokens-per-minute: 0
     billing-units-per-minute: 0
+  suppliers:
+    openai:
+      enabled: false             # V1.1：OpenAI 兼容适配器（真实协议 SSE）
+      base-url: ${QUOTAPILOT_OPENAI_BASE_URL:https://api.openai.com/v1}
+      api-key: ${QUOTAPILOT_OPENAI_API_KEY:}
+      default-max-tokens: 1024
+      connect-timeout-ms: 5000
 
 ---
 spring:
