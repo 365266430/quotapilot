@@ -63,6 +63,19 @@ mvn spring-boot:run -Dspring-boot.run.profiles=postgres \
 
 真实 OpenAI 联调：设置 `QUOTAPILOT_OPENAI_API_KEY` 后运行 `OpenAiRealApiIT`（无凭据自动跳过）。
 
+**真实供应商联调已完成**（智谱开放平台，OpenAI 兼容端点 `https://open.bigmodel.cn/api/paas/v4`）：
+
+| 验证项 | 结果 |
+|---|---|
+| 流式协议兼容性 | `stream_options.include_usage` 支持，末块带 `usage` + `[DONE]`，适配器零修改 |
+| `OpenAiRealApiIT`（凭据守卫） | PASS：全链路 预留→真实调用→usage 解析→结算 |
+| 应用级非流式（HTTP API） | SUCCEEDED：真实 usage=19，超预留退回 45（estimate 64 − actual 19） |
+| 应用级流式（SSE 透传） | 逐块透传 + quotapilot 元事件 `SETTLED chargedMinor=26` |
+| 账目收敛 | settled = 19 + 26 = 45，held=0，敞口=0，与真实供应商用量分毫不差 |
+
+本地联调方式：key/base-url/model 写入 `.env`（已 gitignore，勿提交真实凭据），或以环境变量注入。
+模型默认 `glm-4-flash`（智谱免费档），可用 `QUOTAPILOT_OPENAI_MODEL` 覆盖。
+
 ## 压测与浸泡验证（规范 §7 压测脚本）
 
 ```bash
