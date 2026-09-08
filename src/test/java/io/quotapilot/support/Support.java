@@ -8,6 +8,7 @@ import java.util.Map;
 
 import io.quotapilot.alert.domain.Alert;
 import io.quotapilot.alert.domain.AlertEmitterPort;
+import io.quotapilot.alert.domain.AlertType;
 import io.quotapilot.common.TimeService;
 import io.quotapilot.ledger.domain.AccountPort;
 import io.quotapilot.ledger.domain.AccountStatus;
@@ -41,6 +42,29 @@ public class Support {
         @Override
         public void emit(Alert alert) {
             alerts.add(alert);
+        }
+    }
+
+    /** [M9 测试支撑] 内存告警存储：支持抑制窗口查询。 */
+    public static class FakeAlertStore implements io.quotapilot.alert.domain.AlertStorePort {
+        public final List<Alert> alerts = new ArrayList<>();
+
+        @Override
+        public void save(Alert alert) {
+            alerts.add(alert);
+        }
+
+        @Override
+        public List<Alert> recent(int limit) {
+            return alerts.stream().limit(limit).toList();
+        }
+
+        @Override
+        public long countSince(AlertType type, String accountId, Instant since) {
+            return alerts.stream()
+                    .filter(a -> a.type() == type && a.accountId() != null && a.accountId().equals(accountId))
+                    .filter(a -> a.at().isAfter(since))
+                    .count();
         }
     }
 

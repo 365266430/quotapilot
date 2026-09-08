@@ -1,0 +1,52 @@
+# QuotaPilot 生产编排：应用 + PostgreSQL（权威账本）+ Redis（预留门/限流）
+# 用法: cp .env.example .env && docker compose up -d
+# 注意: 本仓库开发环境无 Docker，镜像构建未实测；首次使用请先 docker compose build 验证。
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: quotapilot
+      POSTGRES_USER: ${PG_USER:-quotapilot}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docs/schema-postgres.sql:/docker-entrypoint-initdb.d/1-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-quotapilot} -d quotapilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      QUOTAPILOT_PG_URL: jdbc:postgresql://postgres:5432/quotapilot
+      QUOTAPILOT_PG_USER: ${PG_USER:-quotapilot}
+      QUOTAPILOT_PG_PASSWORD: ${PG_PASSWORD:-changeme}
+      QUOTAPILOT_REDIS_HOST: redis
+      QUOTAPILOT_REDIS_PORT: "6379"
+      QUOTAPILOT_OPENAI_API_KEY: ${QUOTAPILOT_OPENAI_API_KEY:-}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

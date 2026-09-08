@@ -48,7 +48,7 @@
 
 ```bash
 # 依赖：Java 17+、Maven 3.9+、Redis（默认 localhost:6379）
-mvn test          # 全量自动化验收（39 用例，含真实 Redis Lua 并发压测）
+mvn test          # 全量自动化验收（40 用例，含真实 Redis Lua 并发压测）
 mvn spring-boot:run
 # Web 面板：http://localhost:8080/
 ```
@@ -62,6 +62,28 @@ mvn spring-boot:run -Dspring-boot.run.profiles=postgres \
 ```
 
 真实 OpenAI 联调：设置 `QUOTAPILOT_OPENAI_API_KEY` 后运行 `OpenAiRealApiIT`（无凭据自动跳过）。
+
+## 压测与浸泡验证（规范 §7 压测脚本）
+
+```bash
+./scripts/loadtest.sh 1000 8 100   # 总请求/并发/单请求预估用量
+```
+
+已完成的浸泡验证结果（应用带全部调度器真实运行）：
+- 1000/1000 请求成功、零失败；吞吐 25 req/s（Windows 本机 curl 进程开销主导，非网关瓶颈）
+- **账目精确收敛**：settled = 100,000 minor = 1000 × 100 × 1（分毫不差），held=0，敞口=0
+- 对账 scanned=1000 全对齐、零差额；重复回调 409 幂等且金额不重复；sweep 零悬挂预留
+- 应用日志零 ERROR；sweeper/outbox/告警调度周期运转无异常
+
+## Docker 部署
+
+```bash
+cp .env.example .env   # 修改凭据
+docker compose up -d   # app + PostgreSQL 16 + Redis 7（健康检查 + 自动初始化 DDL）
+```
+
+> 注意：本仓库开发环境无 Docker，镜像构建未实测；首次使用请先 `docker compose build` 验证。
+> api.openai.com 已确认从本网络可达（401=正常未授权），真实联调仅需设置 API key。
 
 ## API 一览（V1）
 

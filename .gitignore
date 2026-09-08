@@ -11,3 +11,4 @@ logs/
 *.mv.db
 *.trace.db
 .DS_Store
+.env
