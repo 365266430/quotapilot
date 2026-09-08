@@ -18,7 +18,7 @@ public interface LedgerEntryJpaRepo extends JpaRepository<LedgerEntryEntity, Str
 
     Optional<LedgerEntryEntity> findByIdempotencyKey(String idempotencyKey);
 
-    @Query("select e.type as t, coalesce(sum(e.amountMinor),0) as s from LedgerEntryEntity e where e.accountId = :a group by e.type")
+    @Query("select e.type as type, coalesce(sum(e.amountMinor),0) as value from LedgerEntryEntity e where e.accountId = :a group by e.type")
     List<TypeSum> sumByAccount(@Param("a") String accountId);
 
     @Query("select coalesce(sum(e.amountMinor),0) from LedgerEntryEntity e where e.requestId = :r and e.type in (io.quotapilot.ledger.domain.LedgerEntryType.SETTLE, io.quotapilot.ledger.domain.LedgerEntryType.ADJUST)")
@@ -30,6 +30,6 @@ public interface LedgerEntryJpaRepo extends JpaRepository<LedgerEntryEntity, Str
     interface TypeSum {
         LedgerEntryType getType();
 
-        Long getSum();
+        Long getValue();
     }
 }

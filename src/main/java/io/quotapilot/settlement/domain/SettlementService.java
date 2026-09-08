@@ -32,18 +32,21 @@ public class SettlementService {
     private final ExposureRepositoryPort exposureRepo;
     private final PriceCatalog priceCatalog;
     private final LedgerPort ledgerPort;
+    private final io.quotapilot.ledger.domain.LedgerQueryPort ledgerQuery;
     private final ReservationGatePort gate;
     private final AlertEmitterPort alerts;
     private final TimeService time;
     private final long exposureGraceSeconds;
 
     public SettlementService(ReservationRepositoryPort reservationRepo, ExposureRepositoryPort exposureRepo,
-                             PriceCatalog priceCatalog, LedgerPort ledgerPort, ReservationGatePort gate,
+                             PriceCatalog priceCatalog, LedgerPort ledgerPort,
+                             io.quotapilot.ledger.domain.LedgerQueryPort ledgerQuery, ReservationGatePort gate,
                              AlertEmitterPort alerts, TimeService time, long exposureGraceSeconds) {
         this.reservationRepo = reservationRepo;
         this.exposureRepo = exposureRepo;
         this.priceCatalog = priceCatalog;
         this.ledgerPort = ledgerPort;
+        this.ledgerQuery = ledgerQuery;
         this.gate = gate;
         this.alerts = alerts;
         this.time = time;
@@ -102,7 +105,8 @@ public class SettlementService {
         Reservation r = reservationRepo.findByRequestId(requestId)
                 .orElseThrow(() -> new DomainExceptions.NotFound("预留不存在: " + requestId));
         if (r.getStatus() == io.quotapilot.ledger.domain.ReservationStatus.SETTLED) {
-            throw new DomainExceptions.RequestStateConflict(requestId, "RESERVED|RELEASED", "SETTLED");
+            // 结算与取消/超时竞态：结算已生效（回调先到），返回首次结果，不得重复退回
+            return priorSettled(requestId);
         }
         if (r.getStatus() == io.quotapilot.ledger.domain.ReservationStatus.RELEASED) {
             return SettlementResult.duplicate(requestId, "RELEASED", 0, r.getReservedAmountMinor());
@@ -126,7 +130,15 @@ public class SettlementService {
     }
 
     private SettlementResult duplicateResult(String requestId) {
-        return SettlementResult.duplicate(requestId, "SETTLED", 0, 0);
+        return priorSettled(requestId);
+    }
+
+    /** 读取首次结算记录作为幂等结果（P6：重复调用返回首次结果）。 */
+    private SettlementResult priorSettled(String requestId) {
+        return ledgerQuery.settlementRecord(requestId)
+                .map(sr -> SettlementResult.duplicate(requestId, sr.getStatus().name(),
+                        sr.getChargedAmountMinor(), sr.getRefundAmountMinor()))
+                .orElseGet(() -> SettlementResult.duplicate(requestId, "SETTLED", 0, 0));
     }
 
     private void gateApplySafe(Runnable action) {

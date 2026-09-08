@@ -6,12 +6,10 @@ import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import io.quotapilot.supplier.domain.SupplierChargeStorePort;
 
-/** [M10/M5] 供应商侧账本适配器（MockSupplier 计费记录）。 */
+/** [M10/M5] 供应商侧账本适配器（MockSupplier 计费记录；调用方无外层事务，独立仓储事务）。 */
 @Component
 public class SupplierChargeAdapter implements SupplierChargeStorePort {
 
@@ -22,7 +20,6 @@ public class SupplierChargeAdapter implements SupplierChargeStorePort {
     }
 
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void save(SupplierCharge charge) {
         SupplierChargeEntity e = new SupplierChargeEntity();
         e.supplierRequestId = charge.supplierRequestId() == null ? UUID.randomUUID().toString()

@@ -24,11 +24,12 @@ public class RedisReservationGate implements ReservationGatePort {
 
     private static final String KEY_PREFIX = "account:balance:";
 
-    /** 原子预留：键不存在时用 ARGV[2..4]（DB 口径）初始化，再判断 available >= estimate。 */
+    /** 原子预留：键不存在时用 ARGV[2..4]（DB 口径）初始化，再判断 available >= estimate。
+     *  注意：Redis 3.0 兼容 —— 多字段初始化用 HMSET（HSET 多字段为 4.0+ 语法）。 */
     private static final String RESERVE_LUA = """
             local k = KEYS[1]
             if redis.call('EXISTS', k) == 0 then
-              redis.call('HSET', k, 'limit', ARGV[2], 'settled', ARGV[3], 'held', ARGV[4])
+              redis.call('HMSET', k, 'limit', ARGV[2], 'settled', ARGV[3], 'held', ARGV[4])
             end
             local est = tonumber(ARGV[1])
             local held = tonumber(redis.call('HGET', k, 'held') or '0')
@@ -56,7 +57,8 @@ public class RedisReservationGate implements ReservationGatePort {
             local settled = tonumber(redis.call('HGET', k, 'settled') or '0')
             local nh = held - tonumber(ARGV[1])
             if nh < 0 then nh = 0 end
-            redis.call('HSET', k, 'held', nh, 'settled', settled + tonumber(ARGV[2]))
+            redis.call('HSET', k, 'held', nh)
+            redis.call('HSET', k, 'settled', settled + tonumber(ARGV[2]))
             return 1
             """;
 
@@ -73,14 +75,14 @@ public class RedisReservationGate implements ReservationGatePort {
             local settled = tonumber(ARGV[2])
             local held = tonumber(ARGV[3])
             if redis.call('EXISTS', k) == 0 then
-              redis.call('HSET', k, 'limit', limit, 'settled', settled, 'held', held)
+              redis.call('HMSET', k, 'limit', limit, 'settled', settled, 'held', held)
               return 1
             end
             local cl = tonumber(redis.call('HGET', k, 'limit') or '0')
             local cs = tonumber(redis.call('HGET', k, 'settled') or '0')
             local ch = tonumber(redis.call('HGET', k, 'held') or '0')
             if cl == limit and cs == settled and ch == held then return 0 end
-            redis.call('HSET', k, 'limit', limit, 'settled', settled, 'held', held)
+            redis.call('HMSET', k, 'limit', limit, 'settled', settled, 'held', held)
             return 2
             """;
 

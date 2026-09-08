@@ -29,8 +29,8 @@ public class AccountAdapter implements AccountPort {
     }
 
     @Override
-    @Transactional
     public AccountSnapshot getOrCreate(ScopeType scopeType, String scopeId, long initialLimitMinor, String currency) {
+        // 无外层事务：saveAndFlush/查询各自独立事务，避免「重查撞上未提交事务」的并发死等（热路径 100 并发建户）
         Optional<AccountEntity> found = repo.findByScopeTypeAndScopeId(scopeType, scopeId);
         if (found.isPresent()) {
             return toSnapshot(found.get());
@@ -41,7 +41,20 @@ public class AccountAdapter implements AccountPort {
             repo.saveAndFlush(e);
             return toSnapshot(e);
         } catch (DataIntegrityViolationException race) {
-            return toSnapshot(repo.findByScopeTypeAndScopeId(scopeType, scopeId).orElseThrow(() -> race));
+            // 并发建户：等待获胜事务提交后读取
+            for (int i = 0; i < 100; i++) {
+                Optional<AccountEntity> winner = repo.findByScopeTypeAndScopeId(scopeType, scopeId);
+                if (winner.isPresent()) {
+                    return toSnapshot(winner.get());
+                }
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            throw race;
         }
     }
 

@@ -9,6 +9,8 @@ import java.util.List;
 public interface UsageEventJpaRepo extends JpaRepository<UsageEventEntity, String> {
     List<UsageEventEntity> findByRequestId(String requestId);
 
+    boolean existsByRequestIdAndSourceAndSeq(String requestId, io.quotapilot.metering.domain.UsageSource source, long seq);
+
     Page<UsageEventEntity> findByAccountIdOrderByOccurredAtDesc(String accountId, Pageable pageable);
 
     long countByAccountId(String accountId);

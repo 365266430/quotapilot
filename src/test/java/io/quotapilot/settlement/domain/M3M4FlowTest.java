@@ -78,7 +78,8 @@ class M3M4FlowTest {
         };
         engine = new ReservationEngine(resolver, accounts, catalog, gate, ledgerAccess, ledger, Optional.empty(),
                 time, 60L, "CNY");
-        settlement = new SettlementService(ledger, ledger.exposurePort(), catalog, ledger, gate, alerts, time, 300L);
+        settlement = new SettlementService(ledger, ledger.exposurePort(), catalog, ledger, ledger, gate, alerts,
+                time, 300L);
         sweeper = new SweeperService(ledger, ledger.exposurePort(), settlement, ledger, gate, time);
         callbacks = new CallbackService(new MemoryUsageEvents(), settlement, time);
         accountId = accounts.getOrCreate(io.quotapilot.ledger.domain.ScopeType.USER, "u1", 10_000L, "CNY").accountId();

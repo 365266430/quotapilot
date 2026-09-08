@@ -92,6 +92,11 @@ public class GatewayOrchestrator {
             reason = ReleaseReason.TIMEOUT; // 已发出、结果未知
         }
         SettlementResult released = settlementService.release(requestId, reason, dispatched);
+        if ("SETTLED".equals(released.status())) {
+            // 结算竞态获胜（回调先于超时处理到达）：请求实际已成功结算
+            return new GatewayResult(requestId, reserve.holdId(), reserve.accountId(), GatewayResult.SUCCEEDED,
+                    null, null, e.getPartialUnits(), released.chargedMinor(), 0, null, reserve.duplicate(), traceId);
+        }
         String exposureId = dispatched
                 ? exposureRepo.findByRequestId(requestId).map(exp -> exp.getExposureId()).orElse(null)
                 : null;

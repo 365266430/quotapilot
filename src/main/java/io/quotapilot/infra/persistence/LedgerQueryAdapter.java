@@ -32,7 +32,9 @@ public class LedgerQueryAdapter implements LedgerQueryPort {
             sums.put(t, 0L);
         }
         for (LedgerEntryJpaRepo.TypeSum ts : entries.sumByAccount(accountId)) {
-            sums.put(ts.getType(), ts.getSum());
+            if (ts.getType() != null) {
+                sums.put(ts.getType(), ts.getValue());
+            }
         }
         return sums;
     }

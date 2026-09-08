@@ -4,14 +4,12 @@ import java.time.Instant;
 import java.util.List;
 
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import io.quotapilot.alert.domain.Alert;
 import io.quotapilot.alert.domain.AlertStorePort;
 import io.quotapilot.alert.domain.AlertType;
 
-/** [M9] 告警存储适配器。 */
+/** [M9] 告警存储适配器（无外层事务调用，独立仓储事务）。 */
 @Component
 public class AlertStoreAdapter implements AlertStorePort {
 
@@ -22,7 +20,6 @@ public class AlertStoreAdapter implements AlertStorePort {
     }
 
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void save(Alert alert) {
         AlertEntity e = new AlertEntity();
         e.type = alert.type();

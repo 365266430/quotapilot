@@ -63,11 +63,12 @@ public class QuotaPilotConfig {
     @Bean
     public SettlementService settlementService(ReservationAdapter reservationRepo, ExposureAdapter exposureRepo,
                                                io.quotapilot.pricing.domain.PriceCatalog priceCatalog,
-                                               LedgerAdapter ledgerPort, RedisReservationGate gate,
+                                               LedgerAdapter ledgerPort, LedgerQueryAdapter ledgerQuery,
+                                               RedisReservationGate gate,
                                                io.quotapilot.alert.domain.AlertEmitterPort alerts, TimeService time,
                                                @Value("${quotapilot.exposure-grace-seconds:300}") long graceSeconds) {
-        return new SettlementService(reservationRepo, exposureRepo, priceCatalog, ledgerPort, gate, alerts, time,
-                graceSeconds);
+        return new SettlementService(reservationRepo, exposureRepo, priceCatalog, ledgerPort, ledgerQuery, gate,
+                alerts, time, graceSeconds);
     }
 
     @Bean

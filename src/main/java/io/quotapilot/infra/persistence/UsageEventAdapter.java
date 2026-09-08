@@ -6,13 +6,14 @@ import java.util.Optional;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import io.quotapilot.metering.domain.UsageEvent;
 import io.quotapilot.metering.domain.UsageEventPort;
 
-/** [M8/P6/Q3] 用量事件适配器：唯一约束幂等，重复投递返回 false 不抛错。 */
+/**
+ * [M8/P6/Q3] 用量事件适配器：唯一约束 (requestId, source, seq) 幂等。
+ * 事务语义：预检查 + 独立仓储事务（调用方无外层事务；禁止嵌套 REQUIRES_NEW 以免并发耗尽连接池）。
+ */
 @Component
 public class UsageEventAdapter implements UsageEventPort {
 
@@ -23,8 +24,10 @@ public class UsageEventAdapter implements UsageEventPort {
     }
 
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean record(UsageEvent event) {
+        if (repo.existsByRequestIdAndSourceAndSeq(event.requestId(), event.source(), event.seq())) {
+            return false; // 重复事件已安全丢弃（P6/Q3）
+        }
         UsageEventEntity e = new UsageEventEntity();
         e.usageEventId = event.usageEventId();
         e.requestId = event.requestId();
@@ -40,7 +43,8 @@ public class UsageEventAdapter implements UsageEventPort {
         try {
             repo.saveAndFlush(e);
             return true;
-        } catch (DataIntegrityViolationException dup) {
+        } catch (DataIntegrityViolationException race) {
+            // 预检查与插入之间的并发重复：视为重复事件（无外层事务，约束冲突已随仓储事务回滚）
             return false;
         }
     }
@@ -59,7 +63,8 @@ public class UsageEventAdapter implements UsageEventPort {
 
     @Override
     public List<UsageEvent> pageByAccount(String accountId, int page, int size) {
-        return repo.findByAccountIdOrderByOccurredAtDesc(accountId, PageRequest.of(Math.max(0, page), Math.min(200, Math.max(1, size))))
+        return repo.findByAccountIdOrderByOccurredAtDesc(accountId,
+                        PageRequest.of(Math.max(0, page), Math.min(200, Math.max(1, size))))
                 .getContent().stream().map(UsageEventAdapter::toDomain).toList();
     }
 

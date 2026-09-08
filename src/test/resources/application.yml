@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: quotapilot-test
+  datasource:
+    url: jdbc:h2:mem:quotapilot-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    hikari:
+      maximum-pool-size: 30
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  data:
+    redis:
+      host: ${QUOTAPILOT_REDIS_HOST:localhost}
+      port: ${QUOTAPILOT_REDIS_PORT:6379}
+  main:
+    allow-bean-definition-overriding: true
+
+server:
+  port: 0
+
+quotapilot:
+  scheduler:
+    enabled: false          # 测试中由用例显式触发 sweeper/outbox，保证确定性
+  reserve-ttl-seconds: 3
+  exposure-grace-seconds: 2
+  sweep-interval-ms: 600000
+  outbox-poll-ms: 600000
+  system-default-limit-minor: 100000000
+  default-currency: CNY
+  low-available-warn-pct: 20
+  exposure-backlog-threshold: 2
+  alert-cooldown-seconds: 0
+  alert-webhook-url: ""
+  mock:
+    default-delay-millis: 0
+    default-drift-percent: 0
+
+logging:
+  level:
+    io.quotapilot: INFO
